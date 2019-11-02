@@ -1,0 +1,522 @@
+---
+title: "CMPT 459.1-19. Programming Assignment 2"
+subtitle: "FIFA 19 Players"
+author: "Felix Sam"
+output: html_notebook
+---
+
+### Introduction
+
+The data has detailed attributes for every player registered in the latest edition of FIFA 19 database, obtained scraping the website “sofifa.com”. Each instance is a different player, and the attributes give basic information about the players and their football skills. Basic pre-processing was done and Goal Keepers were removed for this assignment. 
+
+Please look here for the original data overview and attributes’ descriptions:
+
+-	https://www.kaggle.com/karangadiya/fifa19
+
+And here to get a better view of the information:
+
+-	https://sofifa.com/
+
+---
+
+### Reading the data
+
+Assume you want to decide whether to put each player on Defense or not, based on individual metrics. Attributes that make sense for such task were selected and data was already split into train and test datasets. Train was balanced for training purposes. Please see that test dataset is not balanced (keeps original balance).
+
+```{r}
+train <- read.csv('fifa-train.csv')
+test <- read.csv('fifa-test.csv')
+table(train$Defense)
+table(test$Defense)
+```
+
+---
+
+### Decision Trees
+
+"caret" is a R package that encapsulates several methods from other packages. Below we'll use "rpart" to build a Decision Tree on train dataset to classify "Defense" using all other attributes. We'll see more on trControl later.
+
+```{r}
+library(caret)
+set.seed(1)
+dt <- train(Defense ~ ., # Formula
+            data = train, # Data
+            method = "rpart", # Method
+            trControl = trainControl(method = "none")) # Control options
+```
+
+We can see the resulting model with:
+```{r}
+dt$finalModel
+```
+
+Basically it's just the root node classifying everything as "Yes". Let's find out what's going on.
+
+The method below shows what parameters "caret" package chose to optimize "rpart" within the "train" function.
+```{r}
+modelLookup("rpart")
+```
+
+So, it's only optimizing the complexity parameter `cp`. "rpart" actually incorporates pruning during the learning phase, so that any split that does not decrease the overall lack of fit by a factor of `cp` is not even attempted.
+
+Now, the result below shows the values used in the parameters optimized by "caret" to build the model:
+```{r}
+dt$bestTune
+```
+
+So we can see it only tried `cp = 0.4800357`.
+
+**[Task 1]** (5 marks): Please answer the following question. Does the finding above about `cp` explains the resulting model obtained? Justify.
+
+- Yes cp determines the cost of adding another node to the tree. It determines when the splitting stops.
+- Since cp is relatively high at 0.48, the tree would not split if the overall lack of fit from the resulting split decreases by 0.48
+- It explains why the tree only contains the root node 
+
+---
+
+To tell caret's "train" function to try different values of the parameters it chose to optimize, we can create a grid and pass it to the "train" function. Let's try the following `cp` value: 0.01
+
+```{r}
+dt <- train(Defense ~ ., 
+               data = train,
+               method = "rpart",
+               tuneGrid = expand.grid(cp = 0.01), # GRID for parameters 'caret' optimizes
+               trControl = trainControl(method = "none"))
+```
+
+Here's the resulting model:
+```{r}
+dt$finalModel
+```
+
+Now, let's plot the tree:
+```{r}
+library(rattle)
+fancyRpartPlot(dt$finalModel)
+```
+
+And finally get the confusion matrix on the train dataset:
+```{r}
+confusionMatrix(predict(dt), train$Defense, positive = 'Yes')
+```
+
+**[Task 2]** (1 mark): Please answer the following question. What's the training accuracy for the model?
+
+- 78.69% (0.7869)
+
+---
+
+We can also change parameters that "caret" did not choose to optimize but the original function ("rpart" in this case) uses. To do that, we just pass the parameters directly to caret's "train" function and it will go to "rpart".
+
+So if we do `?rpart` we'll see it uses the "parms" argument, where we can change the quality measure for splitting. Its default is "gini" (for Gini Index), so let's change it and use "information" (for Information Gain).
+
+```{r}
+set.seed(1)
+dt <- train(Defense ~ ., 
+            data = train,
+            method = "rpart",
+            tuneGrid = expand.grid(cp = 0.01),
+            trControl = trainControl(method = "none"),
+            parms = list(split = "information") # "gini" is the default
+            )
+```
+
+Let's see the confusion matrix for training data:
+```{r}
+confusionMatrix(predict(dt), as.factor(train$Defense), positive = 'Yes')
+```
+
+And plot the tree:
+```{r}
+fancyRpartPlot(dt$finalModel)
+```
+
+**[Task 3]** (10 marks): Please answer the following questions:
+
+- What's the training accuracy for the model now? Is it better or worse than before? 
+  - 79.29%. It is better than before (78.69% with gini-index)
+  
+- Is the tree more or less complex overall?
+  - Overall the tree is more complex. 
+  - It includes the Finishing and crossing attributes in the tree
+  
+- Explain possible reasons for the difference observed in complexity observerd in the trees.
+  - Information Gain favors attributes that have a wide range of values. 
+  - When calculating InformationGain, attributes with a wide range of values will be highly branched.
+  - In general each branch of the attribute will have an smaller entropy closer to 0 which would lead to high information gain
+  - This can lead to the attribute to be chosen as an attribute to split the tree which can also lead to overfitting,explaining the higher accuracy compared to using gini-index.
+---
+
+So far we've used a fixed `cp`. Since "caret" chose `cp` to optimize, we can try several values at once. "caret" will then use some resampling method to get the `cp` with best results.
+
+For example, let's try `cp` values of 0.60, 0.40, 0.10, 0.05, 0.01 on the `tuneGrid` and use Accuracy from **10-fold Cross Validation** to choose the best one. To add such option we change the `trControl` on "train" function.
+
+```{r}
+set.seed(1)
+dt <- train(Defense ~ ., 
+            data = train,
+            method = "rpart",
+            tuneGrid = expand.grid(cp = c(0.60, 0.40, 0.10, 0.05, 0.01)),
+            parms = list(split = "gini"),
+            trControl = trainControl(method = "cv", number = 10) # Add Cross-Validation, 10 folds
+            )
+```
+
+Let's see the modeling results:
+```{r}
+dt
+```
+
+It shows the `cp` chosen as the best (`0.01`), and looking at the accuracy (from 10-fold cross validation) for that `cp` we can see it is `0.7827855`.
+
+We can plot the results for each `cp` tested:
+```{r}
+plot(dt)
+```
+
+And see the tree:
+```{r}
+fancyRpartPlot(dt$finalModel)
+```
+
+**[Task 4]** (5 marks): Please answer the following questions.
+
+- Comparing training accuracy with 10-fold CV, does the model seem to be overfitting? 
+  - No, the accuracy from 10-fold CV with cp = 0.01(0.7827855) is around the same accuracy as cp = 0.01 without 10-fold CV(0.7869). 
+  - The training accuracy with 10-fold CV is also smaller.
+  - So it does not appear that the model is overfitting.
+  
+- Does it make sense to be smaller? Justify.
+  - Yes, because cross validation reduces overfitting
+  - By splitting the training set into smaller subsets, you can reduce overfitting because the model trained on one subset can be tested on a different subset, which helps detect if a model works well on the trained data but not the validation data.
+  
+
+---
+
+**[Task 5]** (8 marks): Now using the "train" function, test changing values of `cp` (optimized by "caret"" directly) and other parameters from "rpart" (see `?rpart` for help). Try to get the best model you can, considering the 10-Fold CV Accuracy.
+
+```{r}
+set.seed(1)
+dt <- train(
+            Defense ~ ., 
+            data = train,
+            method = "rpart",
+            tuneGrid = expand.grid(cp = c(0.60, 0.40, 0.10, 0.05, 0.01)),
+            parms = list(split=c("information","gini")),
+            trControl = trainControl(method = "cv", number = 10) # Add Cross-Validation, 10 folds
+)
+```
+
+Show the results for your modeling:
+```{r}
+dt
+```
+
+Plot the results for each `cp` tested:
+```{r}
+plot(dt)
+```
+
+---
+
+### Logistic Regression
+
+**[Task 6]** (5 marks): Create a logistic regression model using caret's "train" function with the method "glm" and 10-fold cross validation. Please save the caret's "train" results on an object "lgr".
+
+```{r}
+set.seed(1)
+lgr <- train(
+            Defense ~ ., 
+            data = train,
+            method = "glm",
+            trControl = trainControl(method = "cv", number = 10) # Add Cross-Validation, 10 folds
+)
+```
+
+Show the results for your modeling:
+```{r}
+lgr
+```
+
+---
+
+Let's see the coefficients of the logistic regression model.
+
+```{r}
+summary(lgr$finalModel)
+```
+
+
+**[Task 7]** (10 marks): Look at the coefficients aboce, please answer the following questions:
+- Based on the coefficients, do you think the model is overfitting? Justify.
+  - Yes, there are alot of attributes that are not statistically significant (P(|z|)>0.05). 
+  - The model will try to find a relation between the attribute and the outcome(defense), but it is highly unlikely that there is a relation between the two, leading to overfitting
+  
+- Is there anything we can do to improve the model?
+  - Reduce the number of attributes for training by removing attributes that are not likely to be statisfically significant.
+  - Use normalization so that one attribute does not become favored over the other attributes
+---
+
+**[Task 8]** (10 marks): Manually pick attributes to *not* use for training. Justify your choices. Pick more/less attributes until the model improves (based on 10-fold CV on train). For that create a new dataset called "train_selec" that is equal to "train" dataset without the selected attributes.
+
+```{r}
+# Create "train_selec"
+# Remove attributes with large P(>|z|) 
+# P(>|z|) > 0.05 is deemed statistically insignificant
+train_selec <- train[, !names(train) %in% 
+                       c("Age",
+                         "Value",
+                         "Height",
+                         "Weight",
+                         "Crossing",
+                         "Volleys",
+                         "Dribbling",
+                         "BallControl",
+                         "Acceleration",
+                         "SprintSpeed",
+                         "Agility",
+                         "Balance",
+                         "ShotPower",
+                         "Jumping",
+                         "Stamina",
+                         "LongShots",
+                         "Aggression",
+                         "SlidingTackle",
+                         "Preferred.Foot",
+                         "Penalties",
+                         "Release.Clause"
+                         )]
+
+```
+
+```{r}
+# Now train Logistic Regression using "train_selec"
+set.seed(1)
+lgr <- train(
+            Defense ~ ., 
+            data = train_selec,
+            method = "glm",
+            trControl = trainControl(method = "cv", number = 10) # Add Cross-Validation, 10 folds
+)
+```
+
+Show the results for your modeling:
+```{r}
+lgr
+summary(lgr$finalModel)
+```
+
+**[Task 9]** (8 marks): How do you explain the model getting better results with less attributes?
+
+- Model does not try to find a correlation for attributes that are highly unlikely to predict the outcome defense.
+- Attributes may be highly correlated to each other. Including only one of these attributes would make the model better by removing the dependent variable.
+- Less attributes makes it simpler for the model to define a hyperplane to seperate into the positive and negative class for defense.
+
+<span style='color:red'><big>**From now on, please use only `train_selec` to train models.**</big></span>
+
+
+---
+
+### K-Nearest Neighbors
+
+**[Task 10]** (5 marks): Create a K-Nearest Neighbors model using caret's "train" function with the method "knn" and 10-fold cross validation. Use the function `modelLookup("knn")` to see the available optimization parameters, try at least ten different k values and please save the caret's "train" results on an object "knn".
+
+Also remember to now use "train_selec".
+
+```{r}
+modelLookup("knn")
+```
+
+```{r}
+set.seed(1)
+knn <- train(
+            Defense ~ ., 
+            data = train_selec,
+            method = "knn",
+            tuneGrid = expand.grid(k = c(2, 3, 4, 5 ,7, 10 ,15,20,25,30)),
+            trControl = trainControl(method = "cv", number = 10) # Add Cross-Validation, 10 folds
+)
+```
+
+Show the results for your modeling:
+```{r}
+knn
+```
+
+Plot the results for each `k` tested:
+```{r}
+plot(knn)
+```
+
+---
+
+**[Task 11]** (8 marks): Please answer the following question: Why did K-NN get bad results? Explain.
+
+- The training data was not normalized. 
+- K-NN assigns each unseen object to a class with the nearest mean vector using a distance function
+- Since the dataset contains many different attributes, each of these attributes have a different range of values so their variance is different.
+- This can cause the K-NN algorithm to favor toward attributes with wide ranges because a wider range of values increases the likelihood of an attribute being a neighbor to the unseen object that is being classified.
+
+---
+
+**[Task 12]** (3 marks): Now fix the problem with "knn", using an additional argument of caret's "train" function. Save the resulting model on "knn".
+
+```{r}
+set.seed(1)
+knn <- train(
+            Defense ~ ., 
+            data = train_selec,
+            method = "knn",
+            tuneGrid = expand.grid(k = c(2, 3, 4, 5 ,7, 10 ,15,20,25,30)),
+            preProcess = c("center","scale"),
+            trControl = trainControl(method = "cv", number = 10) # Add Cross-Validation, 10 folds
+)
+```
+
+Show the results for your modeling:
+```{r}
+knn
+```
+
+Plot the results for each `k` tested:
+```{r}
+plot(knn)
+```
+
+---
+
+So far we've been using "Accuracy" as our main classification metric to get the best model. Let's change that.
+
+Please run the code below for a new function to be used. 
+```{r}
+library(MLmetrics)
+metrics_summary <- function(data, lev = NULL, model = NULL) {
+  data <- as.data.frame(data)
+  lvls <- levels(data$obs)
+  f1_val <- F1_Score(y_pred = data$pred, y_true = data$obs, positive = lev[2])
+  auc_val <- ModelMetrics::auc(ifelse(data$obs == lev[1], 0, 1), data[, lvls[2]])
+  acc_val <- Accuracy(y_pred = data$pred, y_true = data$obs)
+  prec_val <- Precision(y_pred = data$pred, y_true = data$obs, positive = lev[2])
+  rec_val <- Recall(y_pred = data$pred, y_true = data$obs, positive = lev[2])
+  c(F1 = f1_val, AUC = auc_val, Accuracy = acc_val, Precision = prec_val, Recall = rec_val)
+}
+```
+
+
+
+**[Task 13]** (3 marks): Please copy and paste your last K-NN model building using caret's "train", and then replace your current `trControl` with `trControl = trainControl(method = "cv", number = 10, classProbs = TRUE, summaryFunction = metrics_summary)`. Also add the following new argument to "train" function: `metric = "F1"`. Please save the resulting model as "knn2".
+
+```{r}
+set.seed(1)
+knn2 <- train(
+            Defense ~ ., 
+            data = train_selec,
+            method = "knn",
+            tuneGrid = expand.grid(k = c(2, 3, 4, 5 ,7, 10 ,15,20,25,30)),
+            preProcess = c("center","scale"),
+            trControl = trainControl(method = "cv", number = 10, classProbs = TRUE, summaryFunction = metrics_summary),
+            metric = "F1"
+)
+```
+
+Show the results for your modeling:
+```{r}
+knn2
+```
+
+Plot the results for each `k` tested:
+```{r}
+plot(knn2)
+```
+
+---
+
+**[Task 14]** (5 marks): Please answer the following questions:
+
+- Based on F1 metric, did caret chose a different model from before when Accuracy was used?
+  - No, both knn2 and knn chose k=30
+  
+- Which model would you use? Explain why.
+  - I would use the knn model with F1 metric(knn2)
+  - A model can be highly accurate but have poor precision/poor recall
+  - For example, If we have 1000 people to predict who is suited to play defense where 990 aren't suited, but 10 are suited, you can achieve 99% accuracy by predicting everyone isn't suited to play defense but consequently you get 0% recall for those who are suited.
+  - In this task, it is important to predict who should go on defense and also avoid false positives(predict player should go on defense but shouldn't)
+  - So F1 metric is useful since it considers both Precision and Recall.
+---
+
+### Support Vector Machines
+
+**[Task 15]** (10 marks): Create a SVM model using caret's "train" function. Choose one of the methods from "http://topepo.github.io/caret/train-models-by-tag.html#support-vector-machines". Perform 10-fold cross validation and try different optimization parameters (`tuneGrid`) to get the best model you can. Please save the caret's "train" results on object "svm". **Method suggested: "svmLinear2".**
+
+Also remember to now use "train_selec".
+
+```{r}
+set.seed(1)
+svm <- train(
+            Defense ~ ., 
+            data = train_selec,
+            method = "svmLinear2",
+            tuneGrid = expand.grid(cost = c(0.25, 0.50, 0.75, 1.00 )),
+            trControl = trainControl(method = "cv", number = 10, classProbs = TRUE, summaryFunction = metrics_summary)
+)
+```
+
+Show the results for your modeling:
+```{r}
+svm
+```
+
+Show the final model:
+```{r}
+svm$finalModel
+```
+
+Plot the results for each parameter tested:
+```{r}
+plot(svm)
+```
+
+---
+
+### Choosing the best model
+
+Please run the following code to show 10-fold Cross Validation accuracy for all models:
+```{r}
+cv_metrics <- function(model){
+  model$results[row.names(model$bestTune), 'Accuracy']
+}
+sapply(list(dt, lgr, knn, knn2, svm), cv_metrics)
+```
+
+**[Task 16]** (1 mark): Which model is the best and what was its 10-fold CV Accuracy?
+
+- logistics regression(lgr) with accuracy 0.8169026
+
+---
+
+### Evaluating on test dataset
+
+Please run the code below to evaluate the performance of all the best models (of their corresponding type) on the test dataset. 
+```{r}
+data_metrics <- function(model, thedata){
+  res <- predict(model, newdata = thedata, type = "prob")$Yes
+  data <- data.frame(pred = ifelse(res >= 0.5, 'Yes', 'No'), obs = as.factor(thedata$Defense), Yes = res)
+  lev = c('No', 'Yes')
+  metrics_summary(data, lev)
+}
+
+sapply(list(dt, lgr, knn, knn2, svm), data_metrics, thedata=test)
+```
+
+
+**[Task 17]** (3 marks): Looking at the test results, please answer the following questions:
+
+- Which one was the best on the test set? Report its Accuracy.
+  -  knn2 with accuracy 0.8195991
+- Would the same model be chosen considering Accuracy from 10-fold CV on the training dataset?
+  - No the training dataset chose lgr as a model while the evaluation on the test dataset chose knn2
+- Do the best models seem to be overfitting? Explain.
+  - Yes they seem to be overfitting, the train_select may need to reduce more attributes to reduce overfitting.
+  lgr and knn may be overfitting due to too many attributes.
+
+

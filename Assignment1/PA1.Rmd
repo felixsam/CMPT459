@@ -1,0 +1,561 @@
+---
+title: "CMPT 459.1-19. Programming Assignment 1"
+author: "Felix Sam"
+subtitle: FIFA 19Players
+output:
+  html_document:
+    df_print: paged
+---
+
+### Introduction
+
+The data has detailed attributes for every player registered in the latest edition of FIFA 19 database, obtained scraping the website “sofifa.com”. Each instance is a different player, and the attributes give basic information about the players and their football skills. Basic pre-processing was done and Goal Keepers were removed for this assignment. 
+
+Please look here for the original data overview and attributes’ descriptions:
+
+-	https://www.kaggle.com/karangadiya/fifa19
+
+And here to get a better view of the information:
+
+-	https://sofifa.com/
+
+
+
+---
+
+
+### First look
+
+**[Task 1]**: Load the dataset, completing the code below (keep the dataframe name as **fifa**)
+```{r}
+# Loading
+fifa <- read.csv("/Users/felix/Dropbox/CMPT459/Programming_Assignments/Assignment1/fifa.csv")
+```
+
+**[Checkpoint 1]**: How many rows and columns exist?
+```{r}
+cat(ifelse(all(dim(fifa) == c(16122, 68)), "Correct results!", "Wrong results.."))
+```
+
+---
+
+**[Task 2]**: Give a very brief overview of the types of each attribute and their values. **HINT**: Functions *str*, *table*, *summary*.
+```{r}
+# Overview
+
+# To show types of each attribute
+str(fifa)
+
+# Overview of distribution of values for each attribute
+summary(fifa)
+```
+
+
+**[Checkpoint 2]**: Were functions used to display data types and give some idea of the information of the attributes?
+
+
+---
+
+
+### Data Cleaning
+
+Functions suggested to use on this part: *ifelse*, *substr*, *nchar*, *str_split*, *map_dbl*.
+
+Five attributes need to be cleaned.
+
+ - **Value**: Remove euro character, deal with ending "K" (thousands) and "M" (millions), define missing values and make it numeric.
+ - **Wage**: Same as above.
+ - **Release.Clause**: Same as above.
+ - **Height**: Convert to "cm" and make it numeric.
+ - **Weight**: Remove "lbs" and make it numeric.
+ 
+
+**[Task 3]**: The first 3 of the 5 attributes listed above that need to be cleaned are very alike. Create only one function to clean them the same way. This function should get the vector of attribute values as parameter and return it cleaned, so use it three times, each with one of the columns. **Encode zeroes or blank as NA.**
+```{r}
+# Function used to clean attributes
+attr_fix <- function(attribute){
+  
+    cleaned_attribute <- as.character(attribute)
+    
+    # Modify euro symbol character
+    ifelse(grepl("\u20ac",cleaned_attribute),
+                                cleaned_attribute <- gsub('\u20ac',"",cleaned_attribute),
+                                cleaned_attribute <- cleaned_attribute)
+    
+    # Modify M character
+    for (i in grep("M",cleaned_attribute)){
+      cleaned_attribute[i] <- gsub("M","",cleaned_attribute[i])
+      cleaned_attribute[i] <- as.numeric(cleaned_attribute[i]) * 10^6
+    }
+    
+    # Modify K character
+    for (i in grep("K",cleaned_attribute)){
+      cleaned_attribute[i] <- gsub("K","",cleaned_attribute[i])
+      cleaned_attribute[i] <- as.numeric(cleaned_attribute[i]) * 10^3
+    }
+    
+    #encode zeroes or blank as NA
+    cleaned_attribute[cleaned_attribute==""] <- NA
+    cleaned_attribute[cleaned_attribute=="0"] <- NA
+    
+    #make attribute numeric
+    cleaned_attribute <- as.numeric(cleaned_attribute)
+    
+    return(cleaned_attribute)
+}
+
+# Cleaning attributes
+fifa$Value <- attr_fix(fifa$Value)
+fifa$Wage <- attr_fix(fifa$Wage)
+fifa$Release.Clause <- attr_fix(fifa$Release.Clause)
+```
+
+**[Checkpoint 3]**: How many NA values?
+```{r}
+cat(ifelse(sum(is.na(fifa))==1779, "Correct results!", "Wrong results.."))
+```
+
+---
+
+**[Task 4]**: Clean the other two attributes. **Hint**: To convert to "cm" use http://www.sengpielaudio.com/calculator-bodylength.htm.
+```{r}
+# Cleaning attribute Weight:
+weight_fix <- function(attribute){
+  cleaned_attribute <- as.character(attribute)
+
+  #remove "lbs"
+  for (i in grep("lbs",cleaned_attribute)){
+    cleaned_attribute[i] <- gsub("lbs","",cleaned_attribute[i])
+  }
+  
+  cleaned_attribute <- as.numeric((cleaned_attribute))
+  
+  return(cleaned_attribute)
+}
+fifa$Weight <- weight_fix(fifa$Weight)
+```
+
+```{r}
+# Cleaning attribute Height:
+height_fix <- function(attribute){
+    cleaned_attribute = as.character(attribute)
+    
+    # for values with foot only
+    # multiply feet by 30.48 to get cm
+      for (i in !grep("\'",cleaned_attribute)){
+        ifelse(cleaned_attribute[i]=="",
+               cleaned_attribute[i] <- NA,
+               as.numeric(cleaned_attribute[i])*30.48)
+      }
+    
+    #for values with foot and inches
+    for (i in grep("\'",cleaned_attribute)){
+      feet <- as.numeric(unlist(strsplit(cleaned_attribute[i],"\'"))[1])
+      inch <- as.numeric(unlist(strsplit(cleaned_attribute[i],"\'"))[2])
+      # 1 foot is 30.48 cm
+      # 1 inch is 2.54 cm
+      cleaned_attribute[i] <- feet*30.48 + inch*2.54
+    }
+    
+    cleaned_attribute <- as.numeric(cleaned_attribute)
+    
+    return(cleaned_attribute)
+}
+fifa$Height <- height_fix(fifa$Height)
+```
+
+**[Checkpoint 4]**: What are the mean values of these two columns?
+```{r}
+cat(ifelse(all(c(round(mean(fifa[,8]),4)==164.1339, round(mean(fifa[,7]),4)==180.3887)), "Correct results!", "Wrong results.."))
+```
+
+
+---
+
+
+### Missing Values
+
+**[Task 5]**: What columns have missing values? List them below (Replace <ANSWER HERE>). Impute (so do not remove) values missing (that is all NA found) and explain the reasons for the method used. Suggestion: MICE imputation based on random forests .R package mice: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3074241/, Use *set.seed(1)*. **HINT**: Remember to not use "ID" nor "International.Reputation" for the imputation, if MAR (Missing at Random) is considered. Also later remember to put them back to the "fifa" dataframe.
+
+Columns with missing values:
+
+ - "Value"
+ - "Wage"
+ - "Release.Clause"
+
+```{r}
+
+#Get columns with missing values
+columns_with_na <- colnames(fifa)[apply(fifa,2,anyNA)]
+
+library(mice)
+# Handling NA values
+exclude <- c('ID','International.Reputation')
+include <- setdiff(names(fifa),exclude)
+to_impute <- fifa[include]
+#MICE imputation based on random forests
+imp_fifa <- mice (to_impute,m = 5,method ='rf',seed = 1)
+complete_fifa <- complete(imp_fifa,1)
+```
+
+```{r}
+# Putting columns not used on imputation back into "fifa" dataframe
+
+fifa["Value"] <- complete_fifa["Value"]
+fifa["Wage"] <- complete_fifa["Wage"]
+fifa["Release.Clause"] <- complete_fifa["Release.Clause"]
+
+#fifa <- cbind(complete_fifa),fifa[exclude])
+
+```
+
+**[Checkpoint 5]**: How many instances have at least one NA? It should be 0 now. How many columns are there? It should be 68 (remember to put back "ID" and "International.Reputation").
+```{r}
+cat(ifelse(all(sum(is.na(fifa))==0, ncol(fifa)==68), "Correct results!", "Wrong results.."))
+```
+
+
+---
+
+
+### Feature Engineering
+
+**[Task 6]**: Create a new attribute called "Position.Rating" that has the rating value of the position corresponding to the player. For example, if the player has the value "CF" on the attribute "Position", then "Position.Rating" should have the number on the "CF" attribute. **After that, remove the "Position" attribute from the data**.
+
+```{r}
+# Creating the attribute "Position.Rating"
+# Iterating through all the rows
+for (i in 1:nrow(fifa)){
+	#get the rating value of the position
+	position_name <- toString(fifa[i,67])
+	#get the value of the position name
+	val_position <- fifa[i,position_name]
+	#Enter the value as the Position.Rating for that row
+	fifa$Position.Rating[i] <- val_position
+}
+
+```
+
+```{r}
+# Removing the attribute "Position"
+#exclude the "Position" Column
+exclude <- c('Position')
+include <- setdiff(names(fifa),exclude)
+#Include all columns except "Position"
+fifa <- fifa[include]
+
+```
+
+**[Checkpoint 6]**: What's the mean of the "Position.Rating" attribute created? How many columns are there in the dataframe? It should be 68 (remember to remove "Position").
+```{r}
+cat(ifelse(all(c(round(mean(fifa$Position.Rating),5) == 66.87067, ncol(fifa)==68)), "Correct results!", "Wrong results.."))
+```
+
+
+---
+
+
+### Dimension Reduction
+
+**[Task 7]**: Performe PCA (Principal Component Analysis) on the columns representing ratings of positions (that is, attributes: LS, ST, RS, LW, LF, CF, RF, RW, LAM, CAM, RAM, LM, LCM, CM, RCM, RM, LWB, LDM, CDM, RDM, RWB, LB, LCB, CB, RCB, RB). Show the summary of the components obtained. **Keep the minimum number of components to have at least 98.50% of the variance explained by them.**. Remove the columns used for PCA. **HINT**: Function *prcomp*, remember to center and scale.
+
+```{r}
+# Perform PCA
+#First rating of position is LS
+#Last rating of position is RB
+fifa.pca <- prcomp(fifa[grep("LS",colnames(fifa)):
+                          grep("RB",colnames(fifa))],
+                   center = TRUE, 
+                   scale. = TRUE)
+
+# Show Summary
+summary(fifa.pca)
+#First 3 Components have at least 98.50% of the variance explained by them
+
+```
+
+```{r}
+# Put the components back into "fifa" dataframe
+fifa <- cbind(fifa,fifa.pca$x)
+#Only keep the first 3 principle components PC1 PC2 PC3
+fifa <- fifa[,1:71]
+
+# Remove original columns used for PCA
+exclude <- colnames(fifa[9:34])
+include <- setdiff(names(fifa),exclude)
+fifa <- fifa[include]
+```
+
+**[Checkpoint 7]**: How many columns exist in the dataset? It should be 45.
+```{r}
+cat(ifelse(ncol(fifa)==45, "Correct results!", "Wrong results.."))
+```
+
+**[Bonus]**: Use the code below to see which columns influenced the most each component graphically. Replace "fifa.pca" with the object result from the use of *prcomp* function.
+```{r}
+library(factoextra)
+fviz_pca_var(fifa.pca,
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE # Avoid text overlapping
+)
+```
+
+---
+
+
+### Binarization
+
+**[Task 8]**: Perform binarization on the following categorical attributes: "Preferred.Foot" and "Work.Rate". **HINT**: R package "dummies", function *dummy.data.frame*.
+
+```{r}
+# Binarize categorical attributes
+library(dummies)
+fifa <- dummy.data.frame(fifa,c("Preferred.Foot","Work.Rate"))
+```
+
+**[Checkpoint 8]**: How many columns exist in the dataset? It should be 54.
+```{r}
+cat(ifelse(ncol(fifa)==54, "Correct results!", "Wrong results.."))
+```
+
+
+---
+
+### Normalization
+
+**[Task 9]**: Remove attribute "ID" from "fifa" dataframe, save attribute "International.Reputation" on vector named "IntRep" and then also remove "International.Reputation" from "fifa" dataframe. Perform z-score normalization on "fifa", except for columns that came from PCA. Finally combine the normalized attributes with those from PCA saving on "fifa" dataframe. **HINT**: Function *scale*.
+
+```{r}
+#Remove attribute "ID" from "fifa" dataframe
+exclude <- c('ID')
+include <- setdiff(names(fifa),exclude)
+fifa <- fifa[include]
+
+#save attribute "International.Reputation"" on vector named IntRep
+IntRep <- fifa$International.Reputation
+
+#Also remove "International.Reputation" from fifa dataframe
+exclude <- c('International.Reputation')
+include <- setdiff(names(fifa),exclude)
+fifa <- fifa[include]
+
+```
+
+```{r}
+# Normalize with Z-Score
+fifa_normalized <- scale(fifa[1:49],center = TRUE,scale=TRUE)
+
+#Combine normalized attributes with those from PCA 
+#saving on "fifa" dataframe
+fifa <- cbind(fifa_normalized,fifa[50:52])
+
+```
+
+**[Checkpoint 9]**: How many columns exist in the dataset? It should be 52. What's the mean of all the means of the attributes? Should be around zero.
+```{r}
+cat(ifelse(ncol(fifa)==52, "Correct results!", "Wrong results.."))
+```
+
+
+---
+
+### K-Means
+
+**[Task 9]**: Perform K-Means for values of K ranging from 2 to 15. Find the best number of clusters for K-means clustering, based on the silhouette score. Report the best number of clusters and the silhouette score for the corresponding clustering (Replace <ANSWER HERE> below). How strong is the discovered cluster structure? (Replace <ANSWER HERE> below) Use "set.seed(1)". **HINT**: Function *kmeans* (make use of parameters *nstart* and *iter.max*) and *silhouette* (from package "cluster").
+
+```{r}
+# K-Means and Silhouette scores
+library(cluster)
+library(purrr)
+
+#getting distance for dataset
+dist_fifa <- dist(fifa)
+set.seed(1)
+
+#avg_sil function from https://uc-r.github.io/kmeans_clustering#silo
+avg_sil <- function(k) {
+  km.res <- kmeans(fifa, centers = k,iter.max = 15, nstart = 25)
+  ss <- silhouette(km.res$cluster, dist_fifa)
+  mean(ss[, 3])
+}
+
+k.values <- 2:15
+
+avg_sil_values <- map_dbl(k.values, avg_sil)
+
+#based on code from https://uc-r.github.io/kmeans_clustering#silo
+plot(k.values, avg_sil_values,
+       type = "b", pch = 19, frame = FALSE, 
+       xlab = "Number of clusters K",
+       ylab = "Average Silhouettes")
+
+#silhouette score for clusters:2(best number of clusters)
+cat("silhouette score for 2clusters(best number of clusters): " ,avg_sil_values[1] ,"\n")
+
+```
+
+Results found:
+ 
+ - Best number of clusters: 2
+ - Silhouette score: Average silhouette width for 2 Clusters = 0.2136829
+ - How strong is the cluster? Average silhouette width is low, so clustering is not strong
+
+
+**[Checkpoint 9]**: Are there silhouette scores for K-Means with K ranging from 2 to 15? Were the best K and correspondent silhouette score reported?
+
+---
+
+**[Task 10]**: Perform K-means with the K chosen and get the resulting groups. Try out several pairs of attributes and produce scatter plots of the clustering from task 9 for these pairs of attributes. By inspecting these plots, determine a pair of attributes for which the clusters are relatively well-separated and submit the corresponding scatter plot.
+
+```{r}
+# K-Means for best K and Plot
+k_means_2cluster <- kmeans(fifa, centers = 2,iter.max = 15, nstart = 25)
+summary(k_means_2cluster)
+
+plot1 <- plot(fifa[c("Aggression","Positioning")],main="Clustering for Attributes Pair: Aggression and Positioning",col = k_means_2cluster$cluster)
+
+print("Attribute Pair Reactions and Vision have clusters relatively well-seperated")
+plot2 <- plot(fifa[c("Reactions","Vision")],main="Clustering for Attributes Pair: Reactions and Vision",col = k_means_2cluster$cluster)
+
+plot3 <- plot(fifa[c("LongPassing","LongShots")],main="Clustering for Attributes Pair: LongPassing and LongShots",col = k_means_2cluster$cluster)
+plot4 <- plot(fifa[c("HeadingAccuracy","Penalties")],main="Clustering for Attributes Pair: HeadingAccuracy and Penalties",col = k_means_2cluster$cluster)
+plot5 <- plot(fifa[c("Balance","BallControl")],main="Clustering for Attributes Pair: Balance and BallControl",col = k_means_2cluster$cluster)
+
+```
+
+**[Checkpoint 10]**: Is there at least one plot showing two attributes and the groups (colored or circled) reasonably separated?
+
+---
+
+### Hierarchical Clustering
+
+**[Task 11]**: Sample randomly 1% of the data (set.seed(1)). Perform hierarchical cluster analysis on the dataset using the algorithms complete linkage, average linkage and single linkage. Plot the dendrograms resulting from the different methods (three methods should be applied on the same 1% sample). Discuss the commonalities and differences between the three dendrograms and try to explain the reasons leading to the differences (Replace the <ANSWER HERE> below).
+
+```{r}
+library(dplyr)
+# Sample and calculate distances
+set.seed(1)
+# Sample 1% of the dataset
+fifa_sample <- sample_frac(fifa,0.01)
+dist_sample <- dist(fifa_sample)
+
+```
+
+```{r}    
+# Complete
+hcluster_complete <- hclust(dist_sample,method = "complete")
+plot(hcluster_complete,main="Complete Linkage Cluster Dendrogram",xlab = "Sample of Fifa Dataset")
+```
+
+```{r}
+# Average
+hcluster_average <- hclust(dist_sample,method = "average")
+plot(hcluster_average, main="Average Linkage Cluster Dendrogram",xlab = "Sample of Fifa Dataset")
+
+```
+
+```{r}
+# Single
+hcluster_single <- hclust(dist_sample,method = "single")
+plot(hcluster_single,main="Single Linkage Cluster Dendrogram",xlab = "Sample of Fifa Dataset")
+
+```
+
+Discussion:
+
+ - Commonalities: All three algorithms are agglomerative hierachical clustering. They all start with each data point as a single cluster, then clusters join together into bigger clusters until one single cluster is formed with all the data points. The two clusters closest together are merged into one cluster at each iteration.
+ 
+ 
+ - Differences: The method to calculate the distance between one cluster and another cluster for closeness determines the differences between the three algorithms.
+ 
+ Complete Linkage: The distance is defined as the farthest data point from one cluster to the farthest data point from the other cluster. So the clusters with the smallest diameters will merge together at each iteration.
+ 
+ Single Linkage: The distance is defined as the closest data point from one cluster to the closest data point from the other cluster.So the clusters with data points closest to datapoints of nearby clusters will merge together at each iteration.
+ 
+Average Linkage: The distance is defined as an average distance of each point in one cluster to every point in the other cluster.
+ 
+The dendrograms plotted illustrate the differences between the three algorithms.
+Single Linkage will merge the clusters with data points closest to each other so the dendrogram is more likely to form long chains.
+
+Complete Linkage will merge clusters with big diameters later, so the dendrogram is more likely to have uniform sized trees. 
+
+Average Linkage is the middle ground between single linkage and complete linkage so the dendrogram looks in between the dendrograms for single and complete linkage.
+
+**[Checkpoint 11]**: Does the discussion show commonalities and differences between the three dendrograms and explain the differences?
+
+---
+
+### Clustering comparison
+
+**[Task 12]**: Now perform hierarchical cluster analysis on the **ENTIRE dataset** using the algorithms complete linkage, average linkage and single linkage. Cut all of the three dendrograms from task 11 to obtain a flat clustering with the number of clusters determined as the best number in task 9. 
+
+To perform an external validation of the clustering results, use the vector "IntRep"" created. What is the Rand Index for the best K-means clustering? And what are the values of the Rand Index for the flat clusterings obtained in this task from complete linkage, average linkage and single linkage? Discuss the results (Replace <ANSWER HERE> below). **HINT**: Function *cluster_similarity* from package "clusteval".
+
+```{r}
+# Hierarchical Clusterings (Complete, Average and Single)
+
+#Hierachical Clustering Complete Linkage
+hclust_complete <- hclust(dist_fifa,method = "complete")
+
+#Hierachical Clustering Average Linkage
+hclust_average <- hclust(dist_fifa,method = "average")
+
+#Hierachical Clustering Single Linkage
+hclust_single <- hclust(dist_fifa,method = "single")
+
+```
+
+```{r}
+# Flat Clusterings
+
+#Split into 2 clusters based on best cluster number for kmeans
+
+#Complete Linkage Flat Clustering
+flat_complete <- cutree(hclust_complete,2)
+
+#Average Linkage Flat Clustering
+flat_average <- cutree(hclust_average,2)
+
+#Single Linkage Flat Clustering
+flat_single <- cutree(hclust_single,2)
+
+```
+
+```{r}
+# Cluster Similarities
+library(clusteval)
+
+#Rand Index for Best K-means clustering (2 Clusters)
+rand_kmeans <- cluster_similarity(IntRep,k_means_2cluster$cluster,similarity = "rand")
+cat("Rand Index for Best K-means clustering (2 Clusters): ", rand_kmeans ,"\n")
+
+#Rand Index for Complete Linkage Flat Clustering
+rand_flat_complete <- cluster_similarity(IntRep,flat_complete,similarity = "rand")
+cat("Rand Index for Complete Linkage Flat Clustering: " ,rand_flat_complete ,"\n")
+
+#Rand Index for Average Linkage Flat Clustering
+rand_flat_average <- cluster_similarity(IntRep,flat_average,similarity = "rand")
+cat("Rand Index for Average Linkage Flat Clustering: ",rand_flat_average ,"\n")
+
+#Rand Index for Single Linkage Flat Clustering
+rand_flat_single <- cluster_similarity(IntRep,flat_single,similarity = "rand")
+cat("Rand Index for Single Linkage Flat Clustering: ", rand_flat_single ,"\n")
+
+```
+
+Discussion:
+
+ - Rand Index for K-means clustering is around 0.5 while the Rand Index for the Flat Clusterings are all around 0.83. The higher Rand Index values for Hierachical clusters means that there is more similarity between the Hierachical clusters and the IntRep data compared to the lower similarity between K-Means clusters and the IntRep data.This suggests that Hierarchical Clustering produces better clusters compared to K-Means Clustering for the fifa dataset.
+ 
+ - Possible reasons that Hierachical clustering produced better clusters is that the K-Means algorithm assumes clusters are spherical, that all the attributes have around the same variance and that every cluster is around the same size. These assumptions may not have been valid for this dataset. 
+ 
+ - This can be visualized in the scatter plot for K-Means in Task 9. The clusters do not form well defined spherical clusters.
+ 
+ - Also some of the attributes in the dataset have a large variance in values while other attributes have small variance. Although normalization was applied to the dataset, it can be difficult to decide on the correct scaling for the dataset. 
+ 
+ - Hierachical Clustering does not follow the assumptions that K-Means contains. It is better for non-spherical clusters where a cluster may be the closest data points which form a path. The clusters also don't need to have around the same size of datapoints which is better for this dataset, because of the large number of attributes which makes it unlikely that all clusters are around the same size.
+ 
+ 
+**[Checkpoint 12]**: Does the discussion include relevant comparison of the clusters and makes sense?
+

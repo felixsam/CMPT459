@@ -1,0 +1,339 @@
+---
+title: "CMPT 459.1-19. Programming Assignment 3"
+author: "Felix Sam"
+subtitle: FIFA 19 Players
+output:
+  html_document:
+    df_print: paged
+---
+
+### Introduction
+
+The data has detailed attributes for every player registered in the latest edition of FIFA 19 database, obtained scraping the website “sofifa.com”. Each instance is a different player, and the attributes give basic information about the players and their football skills. Basic pre-processing was done and Goal Keepers were removed for this assignment. 
+
+Please look here for the original data overview and attributes’ descriptions:
+
+-	https://www.kaggle.com/karangadiya/fifa19
+
+And here to get a better view of the information:
+
+-	https://sofifa.com/
+
+---
+
+### Reading the data
+
+```{r}
+train <- read.csv('fifa-train.csv')
+test <- read.csv('fifa-test.csv')
+```
+
+#### Remove insignificant attributes from training data
+- Removed attributes that are deemed statistically insignificant when training using "glm"  
+- From Programming Assignment 2  
+```{r}
+# Create "train_selec"
+# Remove attributes with large P(>|z|) 
+# P(>|z|) > 0.05 is deemed statistically insignificant
+train_selec <- train[, !names(train) %in% 
+                       c("Age",
+                         "Value",
+                         "Height",
+                         "Weight",
+                         "Crossing",
+                         "Volleys",
+                         "Dribbling",
+                         "BallControl",
+                         "Acceleration",
+                         "SprintSpeed",
+                         "Agility",
+                         "Balance",
+                         "ShotPower",
+                         "Jumping",
+                         "Stamina",
+                         "LongShots",
+                         "Aggression",
+                         "SlidingTackle",
+                         "Preferred.Foot",
+                         "Penalties",
+                         "Release.Clause"
+                         )]
+
+```
+
+
+---
+
+### Scenario A - Focus on prediction accuracy, not interested in interpretability
+
+**[Task 1]**: (20 marks) Focusing on using the dataset for prediction and not needing to interpret the models, use the train dataset to create 2 models (one using Random Forest and the other Extreme Gradient Boosting), for predicting “Defense”. Use 10-fold cross validation for tuning. Report the confusion matrix and accuracy for each of the models on the test dataset.
+
+---
+
+
+#### Model using Random Forest
+
+```{r}
+library(caret)
+
+set.seed(1)
+model_rf <- train(Defense ~.,
+               data = train_selec,
+               method = "rf",
+               preProcess = c("center","scale"), #Normalize
+               trControl = trainControl(method = "cv", number = 10) # Add Cross-Validation, 10 folds
+               )
+
+```
+
+```{r}
+model_rf
+```
+
+#### Model using Extreme Gradient Boosting
+
+```{r}
+library(xgboost)
+
+set.seed(1)
+model_xgb <- train(Defense ~.,
+                          data = train,
+                          method = "xgbTree",
+                          preProcess = c("center","scale"), #Normalize
+                          trControl = trainControl(method = "cv", number = 10) # Add Cross-Validation, 10 folds
+                          )
+
+```
+
+```{r}
+model_xgb
+```
+
+
+#### Confusion Matrix and Accuracy for Random Forest on Test Dataset  
+Random Forest Accuracy: 0.8318  
+```{r}
+confusionMatrix(predict(model_rf,test),as.factor(test$Defense),positive = 'Yes')
+```
+
+
+
+#### Confusion Matrix and Accuracy for Extreme Gradient Boosting on Test Dataset  
+Extreme Gradient Boosting Accuracy: 0.8101  
+```{r}
+confusionMatrix(predict(model_xgb,test),as.factor(test$Defense),positive = 'Yes')
+
+```
+
+
+**[Task 2]** (10 marks): Analyze the importance of the different attributes in your best model of
+[Task 1]. Report the top 3 most important attributes in decreasing order of importance and explain
+their relevance for the classification task.
+
+Each attribute has a different amount of significance in predicting the classification of "Defense".  
+Attributes that are most important determine the split to decide whether to classify an observation as "Yes" or "No" for assigning "Defense".  
+
+#### Random Forest Top 3 Most Important Attributes
+
+Top 3 Most Important Attributes:  
+ 1. LongPassing  
+ 2. StandingTackle  
+ 3. HeadingAccuracy  
+ 
+These attributes are important because their values have a large affect on deciding whether to classify a player as "Yes" or "No" for "Defense".  
+For example, if the value of LongPassing < 0.17, it will split the tree in a way that better predicts the player as "No" for "Defense".  
+Less important attributes may have a small affect on classification, For example, if Age < 20, then the chance of classifying the player as "Defense" improves by a small amount.  
+LongPassing in comparision will increase the probability of classifying the player as "Defense" if it is > 0.17.  
+If attributes appear as split selections for multiple individual decision trees, they are more important because they have greater affect on the Random Forest.  
+
+
+```{r}
+varImp(model_rf)
+```
+
+---
+
+### Scenario B – Focus on interpretability, less on prediction accuracy
+
+**[Task 3]** (20 marks): Focusing more on interpretability of the models than on prediction accuracy,use the train dataset to create 2 other models with 2 different algorithms for predicting “Defense”. Think about models that are not too hard to know which attributes affect positively/negatively the chance of a given player being a “Defense” player. Being able to explain how a specific class label was predicted for a given observation is also helpful. Recall that on “Programming Assignment 2” we used some models with good interpretability. Use 10-fold cross validation for tuning. Report the confusion matrix and accuracy for each of the models on the test dataset. 
+
+#### Logistic Regression Model  
+```{r}
+# Logistic Regression
+set.seed(1)
+model_lgr <- train(Defense ~ .,
+                   data = train_selec,
+                   method = "glm",
+                   preProcess = c("center","scale"), #Normalize
+                   trControl = trainControl(method = "cv" , number = 10)
+                   )
+```
+
+```{r}
+summary(model_lgr$finalModel)
+```
+
+
+#### Decision Tree Model
+
+```{r}
+#Decision Tree
+set.seed(1)
+model_dt <- train(Defense ~ ., 
+            data = train_selec,
+            method = "rpart",
+            tuneGrid = expand.grid(cp = c(0.60, 0.40, 0.10, 0.05, 0.01)),
+            parms = list(split = "gini"),
+            preProcess = c("center","scale"), #Normalize
+            trControl = trainControl(method = "cv", number = 10) # Add Cross-Validation, 10 folds
+            )
+```
+
+
+```{r}
+library(rattle)
+fancyRpartPlot(model_dt$finalModel)
+```
+
+
+#### Logistic Regression Confusion Matrix and Accuracy on Test Dataset  
+Logistic Regression Accuracy: 0.8185  
+```{r}
+confusionMatrix(predict(model_lgr,test),as.factor(test$Defense),positive = 'Yes')
+```
+
+
+#### Decision Tree Confusion Matrix and Accuracy on Test Dataset   
+Decision Tree Accuracy: 0.8062  
+```{r}
+confusionMatrix(predict(model_dt,test),as.factor(test$Defense),positive = 'Yes')
+```
+
+---
+
+
+**[Task 4]** (10 marks): Analyze the importance of the different attributes in your best model of [Task 3]. Report the top 3 most important attributes in decreasing order of importance and explain their relevance for the classification task.
+
+
+#### Decision Tree Top 3 Most Important Attributes  
+
+Top 3 Most Important Attributes  
+ 1. StandingTackle  
+ 2. LongPassing  
+ 3. HeadingAccuracy  
+
+```{r}
+fancyRpartPlot(model_dt$finalModel)
+```
+
+- The three attributes are the most important because they are the nodes at the top level of the decision tree that determines the split.  
+- StandingTackle is more important than LongPassing because it only appears as a parent node once in the decision tree, while LongPassing and Heading Accuracy appears twice as parents nodes in the tree.  
+- From the leaf node classifying "Yes", StandingTackle classifies 31% of the training dataset,so the value of StandingTackle gives the most information for predicting the classification of "Defense"  
+
+```{r}
+varImp(model_dt)
+```
+
+
+---
+
+**[Task 5]** (10 marks): Using your best model of [Task 3], is it possible to know which attributes affect positively/negatively the chance of a given player being a “Defense” player? Explain why.
+
+```{r}
+fancyRpartPlot(model_dt$finalModel)
+```
+
+Yes, based on the decision tree plot it is possible to determine how increasing or decreasing the value of an attribute has on the probability of classifying a player as "Defense".  
+Lower level tree nodes are affected by the conditional value for the parent nodes, so the value of the parent node has a large affect on either increasing or decreasing the chance of classifying as "Defense".   
+
+For example, the decision tree plot gives a 31% chance of classifying as "Yes" for Defense if StandingTackle > 0.38.  
+So, if StandingTackle has a value larger than 0.38, then there is a positive affect on predicting the player as "Defense".    
+If StandingTackle has a value smaller than 0.38 then there is a negative affect on predicting the player as "Defense".   
+If the value of an attribute is changed, and the attribute is a child node of a parent node, then the probability can increase or decrease as well.  
+Attributes that have low information gain or are not part of the decision tree have little affect on predicting the player as "Defense".  
+
+---
+
+**[Task 6]** (15 marks): Choose one random observation from the test dataset and get its label prediction from the best model of [Task 3]. Explain, as much as possible, why the model predicted such label, in terms of the observation’s attributes.
+
+```{r}
+# Remove insignicant attributes, like in train_selec
+random_ob <- test[,!names(test) %in% 
+                       c("Age",
+                         "Value",
+                         "Height",
+                         "Weight",
+                         "Crossing",
+                         "Volleys",
+                         "Dribbling",
+                         "BallControl",
+                         "Acceleration",
+                         "SprintSpeed",
+                         "Agility",
+                         "Balance",
+                         "ShotPower",
+                         "Jumping",
+                         "Stamina",
+                         "LongShots",
+                         "Aggression",
+                         "SlidingTackle",
+                         "Preferred.Foot",
+                         "Penalties",
+                         "Release.Clause"
+                         )]
+
+#Get the value of Defense for the firth row of the test dataset
+print("Defense Classification for fifth row in test dataset")
+random_ob[5,]$Defense
+
+#Normalize the data for interpretation,leave out Defense attribute
+random_ob <- scale(random_ob[1:15],center=TRUE,scale=TRUE)
+
+
+print("Normalized Row 5 in test dataset")
+random_ob[5,]
+
+```
+
+
+#### Predict random observation using Decision Tree
+```{r}
+#Predict class using decision tree
+predict(model_dt,test[5,])
+```
+Observed Values for Row 5 of test dataset:  
+- Standing Tackle = 0.9247996  
+- LongPassing = 2.4916241  
+- HeadingAccuracy = -0.2000884  
+- Finishing = 1.8130998  
+
+```{r}
+fancyRpartPlot(model_dt$finalModel)
+```
+
+From the decision tree plot:  
+- LongPassing is greater than -0.17  
+- StandingTackle > 0.38  
+- So the observation will be classified as "Yes" for assigning player as "Defense" 
+
+---
+
+### Comparing Scenarios A and B
+**[Task 7]** (15 marks): Compare the results of the models of [Task 1] and [Task 3]. Was there anytrade-off between interpretability and prediction accuracy? Explain. 
+
+Prediction Accuracies for model on Test Dataset:  
+- Random Forest: 0.8318  
+- Extreme Gradient Boosting: 0.8101  
+- Logistic Regression: 0.8185  
+- Decision Tree: 0.8062  
+
+Yes, Random Forest was the most accurate model, but is hard to interpret.  
+Decision Tree has the lowest prediction accuracy, but is the easiest to interpret.  
+
+- The models that are more accurate are also more complex.  
+- The increased complexity allows the training to use more factors to predict the class.  
+- The increased complexity also makes it harder to interpret what parts of the data affect the prediction of the class as well as how significant each part of the data is in prediction.  
+-  Logistic Regression is more accurate than Decision Tree, but it is harder to interpret the results because it cannot be visualized as easily.  
+-  Random Forest is an essemble classifier of individual decision trees, so overfitting is reduced during training to increase accuracy on the test dataset, but it is harder to interpret which attributes have the largest affect on classification because it cannot be plotted and visualized as easily as the Decision Tree model.  
+
+---

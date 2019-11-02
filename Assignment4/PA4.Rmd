@@ -1,0 +1,536 @@
+---
+title: "CMPT 459.1-19. Programming Assignment 4"
+author: "Felix Sam"
+subtitle: FIFA 19 Players
+output:
+  html_document:
+    df_print: paged
+---
+
+### Introduction
+
+The "Pairs FIFA 19" dataset contains detailed information for soccer players scraped from the website "sofifa.com". Each record is a pair of different players, and the attributes provide basic information about both players and their soccer skills.   
+
+The dataset contains 142 attributes, where the first is the pair ID, the following 70 attributes refer to the attributes of the first player, the next 70 to the attributes of the second player, and the last attribute (named "Chemistry") records if the pair of players have "Good" or "Bad" chemistry - in other words, if they play well together or not.   
+
+Here are the original data overview and attribute descriptions:   
+- https://www.kaggle.com/karangadiya/fifa19   
+
+and here is a better view of the information:   
+- https://sofifa.com/   
+
+Our goal is to classify each pair of players as having "Good" or "Bad" chemistry, based on the attributes of the two players.   
+
+The data was split into train (60%), validation (20%) and test (20%) datasets.   
+
+The test dataset does not have "Chemistry" values.    
+
+
+---
+
+### Reading the data  
+
+```{r}
+train <- read.csv('pairsFifa-train.csv')
+valid <- read.csv('pairsFifa-valid.csv')
+test <- read.csv('pairsFifa-test.csv')
+```
+
+#### Merge Train and Validation into one dataset for cross validation  
+```{r}
+library(dplyr)
+train_valid <- bind_rows(train,valid) 
+```
+----
+
+```{r}
+summary(train_valid)
+```
+
+- International.Reputation does not have any variance. Q1 Median and Q3 are 1. It is not useful for classification so it will be removed.  
+- Pair.ID identifies the pair of players and is unique, so it can lead to overfitting and will be removed.  
+- Wage has a wide variance. Some players have abnormally high wage or low wage. Attribute likely has lots of noise, so it will be removed.    
+- Preferred.Foot is unbalanced, there are more right footed players than left footed players  
+
+### Remove attributes : International.Reputation, Pair.ID, Wage, Preferred.Foot  
+```{r}
+#remove list of attributes from dataframe
+remove_attribute <- function(df,attribute){
+  df <- df[, !names(df) %in%
+             attribute
+           ]
+  return(df)
+}
+
+train_selec <- remove_attribute(train_valid,
+                                c("International.Reputation",
+                                  "International.Reputation.1",
+                                  "Pair.ID",
+                                  "Wage",
+                                  "Wage.1",
+                                  "Preferred.Foot",
+                                  "Preferred.Foot.1"
+                                  )
+                                )
+```
+
+
+----
+
+
+
+
+**[Task 1]**:  (70 marks) Considering that there is no need of interpreting the models, focus on using the dataset for prediction, trying to avoid overfitting:   
+
+??? Feel free to select features and do any feature engineering desired, but please make sure to explain the reasons behind each transformation.   
+??? Use the train dataset to train at least two models for predicting "Chemistry".   
+??? Use the validation dataset for tuning.    
+??? Briefly describe your approach to avoid overfitting.   
+??? Report the confusion matrix and accuracy for your best model on the validation dataset.   
+
+# Task 1  
+
+## Feature Engineering  
+- Create new features that to better explain attribute effect on classification by reducing dimensionality  
+
+### Create Position Rating for Position and Position.1  
+- Rating for the player's position can give more information about their chemistry   
+- High ratings may be more desirable or a pair with similar ratings may have better chemistry   
+
+```{r}
+position_rating <- function(df){
+  for (i in 1:nrow(df)){
+    	#get the rating value of the position and position.1
+    	position_name <- toString(df[i,which(colnames(df) == "Position")])
+    	position_name.1 <- toString(df[i,which(colnames(df) == "Position.1")])
+    	#get the value of the position name
+	    val_position <- df[i,position_name]
+	    val_position.1 <- df[i,position_name.1]
+	    #Enter the value as the Position.Rating for that row
+      df$Position.Rating[i] <- val_position
+      df$Position.Rating.1[i] <- val_position.1
+  }
+  return(df)
+}
+
+train_selec <- position_rating(train_selec)
+valid <- position_rating(valid)
+test <- position_rating(test)
+
+#Remove Position
+train_selec <- remove_attribute(train_selec,
+                                c("Position",
+                                  "Position.1")
+                                )
+```
+
+### Nationality Match  
+- Players with the same nationality are likely to have better chemistry   
+- Create feature that shows if the pair of players belong to the same nationality  
+```{r}
+nationality_match <- function(df){
+  for (i in 1:nrow(df)){
+    	#get the rating value of the position and position.1
+    	nationality <- toString(df[i,which(colnames(df) == "Nationality")])
+    	nationality.1 <- toString(df[i,which(colnames(df) == "Nationality.1")])
+    	if (nationality == nationality.1){
+    	  df$nationality.match[i] <- 1
+    	}else{
+    	  df$nationality.match[i] <- 0
+    	}
+  }
+  return(df)
+}
+
+train_selec <- nationality_match(train_selec)
+valid <- nationality_match(valid)
+test <- nationality_match(test)
+
+#Remove Nationality
+train_selec <- remove_attribute(train_selec,
+                                c("Nationality",
+                                  "Nationality.1")
+                                )
+```
+
+
+### Matching Body Type  
+- Players with matching body types may play better together  
+- Create new feature that finds if the body type is the same for the pair of players  
+```{r}
+body_type_match <- function(df){
+  for (i in 1:nrow(df)){
+    	#get the rating value of the position and position.1
+    	body_type <- toString(df[i,which(colnames(df) == "Body.Type")])
+    	body_type.1 <- toString(df[i,which(colnames(df) == "Body.Type.1")])
+    	if (body_type == body_type.1){
+    	  df$body.type.match[i] <- 1
+    	}else{
+    	  df$body.type.match[i] <- 0
+    	}
+  }
+  return(df)
+}
+
+train_selec <- body_type_match(train_selec)
+valid <- body_type_match(valid)
+test <- body_type_match(test)
+
+#Remove body type
+train_selec <- remove_attribute(train_selec,
+                                c("Body.Type",
+                                  "Body.Type.1")
+                                )
+```
+
+
+#Work Rate Match   
+- Players with similar work rates may have better chemistry    
+- If the players are within range of each in work rate, they are a match     
+- Player 1(mediummedium) Player 2(mediumhigh) are a match    
+```{r}
+work_rate_match <- function(df){
+  for (i in 1:nrow(df)){
+    	#get the rating value of the position and position.1
+    	Work_Rate <- toString(df[i,which(colnames(df) == "Work.Rate")])
+    	Work_Rate.1 <- toString(df[i,which(colnames(df) == "Work.Rate.1")])
+    	# if the workrate is similar, it is a match
+    	if (grepl(Work_Rate,Work_Rate.1) || grepl(Work_Rate.1,Work_Rate)){
+    	  df$work.rate.match[i] <- 1
+    	}else{
+    	  df$work.rate.match[i] <- 0
+    	}
+  }
+  return(df)
+}
+
+train_selec <- work_rate_match(train_selec)
+valid <- work_rate_match(valid)
+test <- work_rate_match(test)
+
+#Remove work.rate attribute
+train_selec <- remove_attribute(train_selec,
+                                c("Work.Rate",
+                                  "Work.Rate.1")
+                                )
+
+summary(train_selec)
+
+```
+
+### PCA for Positions
+- Use Principal Component Analysis(PCA) to reduce dimensionality on similar features    
+- PCA is used on columns representing ratings of positions for each player(2 seperate PCA for each player)   
+- Use PCA components for modeling, and remove the columns representing ratings of positions for each player   
+
+```{r}
+#PCA For Positions of Player 1
+p1positions.pca <- prcomp(train_valid[grep("LS",colnames(train_valid))[1]:
+                                        grep("RB",colnames(train_valid))[1]
+                                      ],
+                   center = TRUE, 
+                   scale. = TRUE)
+
+#For valid set
+p1positions.pca.valid <- prcomp(valid[grep("LS",colnames(valid))[1]:
+                                        grep("RB",colnames(valid))[1]
+                                      ],
+                   center = TRUE, 
+                   scale. = TRUE)
+
+#For test set
+p1positions.pca.test <- prcomp(test[grep("LS",colnames(test))[1]:
+                                        grep("RB",colnames(test))[1]
+                                      ],
+                   center = TRUE, 
+                   scale. = TRUE)
+
+
+#PCA Compositions for Player 2
+p2positions.pca <- prcomp(train_valid[grep("LS",colnames(train_valid))[2]:
+                                        grep("RB",colnames(train_valid))[2]
+                                      ],
+                   center = TRUE, 
+                   scale. = TRUE)
+
+
+#For valid
+p2positions.pca.valid <- prcomp(valid[grep("LS",colnames(valid))[2]:
+                                        grep("RB",colnames(valid))[2]
+                                      ],
+                   center = TRUE, 
+                   scale. = TRUE)
+
+#For test
+p2positions.pca.test <- prcomp(test[grep("LS",colnames(test))[2]:
+                                        grep("RB",colnames(test))[2]
+                                      ],
+                   center = TRUE, 
+                   scale. = TRUE)
+
+
+```
+
+
+```{r}
+summary(p1positions.pca)
+```
+
+```{r}
+summary(p2positions.pca)
+```
+
+Keep the minimum number of components to have at least 98.50% of the variance explained by them.   
+
+```{r}
+#For PCA for Player 1
+#Keep First 3 Components
+p1components <- p1positions.pca$x
+p1components <- p1components[,1:3]
+
+p1components.valid <- p1positions.pca.valid$x
+p1components.valid <- p1components.valid[,1:3]
+
+p1components.test <- p1positions.pca.test$x
+p1components.test <- p1components.test[,1:3]
+
+#For PCA for Player 2
+#Keep First 3 Components
+p2components <- p2positions.pca$x
+p2components <- p2components[,1:3]
+
+
+#Rename components
+colnames(p2components)[1] <- "PC1.1"
+colnames(p2components)[2] <- "PC2.1"
+colnames(p2components)[3] <- "PC3.1"
+
+
+#Valid Set
+p2components.valid <- p2positions.pca.valid$x
+p2components.valid <- p2components.valid[,1:3]
+
+#Rename components
+colnames(p2components.valid)[1] <- "PC1.1"
+colnames(p2components.valid)[2] <- "PC2.1"
+colnames(p2components.valid)[3] <- "PC3.1"
+
+
+#Test Set
+p2components.test <- p2positions.pca.test$x
+p2components.test <- p2components.test[,1:3]
+
+#Rename components
+colnames(p2components.test)[1] <- "PC1.1"
+colnames(p2components.test)[2] <- "PC2.1"
+colnames(p2components.test)[3] <- "PC3.1"
+
+```
+
+
+```{r}
+#removing Positions attributes for first player
+exclude <- colnames(train_selec[grep("^LS$",colnames(train_selec))[1]:
+                                        grep("^RB$",colnames(train_selec))[1]
+                                      ])
+include <- setdiff(names(train_selec),exclude)
+
+train_selec <- train_selec[include]
+
+#removing Positions attribute for second player
+exclude <- colnames(train_selec[grep("^LS.1$",colnames(train_selec)):
+                                        grep("^RB.1$",colnames(train_selec))
+                                      ])
+
+include <- setdiff(names(train_selec),exclude)
+
+train_selec <- train_selec[include]
+
+```
+
+```{r}
+#combine to train_selec
+train_selec <- cbind(train_selec,p1components)
+train_selec <- cbind(train_selec,p2components)
+
+#combine components to valid set
+valid <- cbind(valid,p1components.valid)
+valid <- cbind(valid,p2components.valid)
+
+#combine components to test set
+test <- cbind(test,p1components.test)
+test <- cbind(test,p2components.test)
+
+```
+--- 
+
+#### Feature Selection using Correlation Matrix    
+
+- Use a correlation matrix to remove features that are highly correlated to each other     
+- High correlation features are likely to give redundant information, and adds unnecessary complexity during training    
+- For a large dataset correlation greater than 60% implies high correlation   
+- Get a correlation matrix for attributes of player 1 and a separate correlation matrix for attributes of player 2   
+- Remove high correlation attributes   
+```{r}
+library(mlbench)
+library(caret)
+
+#Correlation for Player 1 attributes
+cor_train <- train_selec[grep("^Age$",colnames(train_selec)):
+                                        grep("^Skill.Moves$",colnames(train_selec))]
+
+correlationMatrix <- cor(cor_train[,1:37])
+
+# find attributes that are highly corrected 60% Correlation
+highlyCorrelated <- findCorrelation(correlationMatrix, cutoff=0.6)
+
+colnames(train_selec[highlyCorrelated])
+
+#remove those attributes with more than 60% correlation
+train_selec <- remove_attribute(train_selec,colnames(train_selec[highlyCorrelated]))
+```
+
+
+```{r}
+#Correlation for Player 2 attributes
+
+cor_train.1 <- train_selec[grep("^Age.1$",colnames(train_selec)):
+                                        grep("^Skill.Moves.1$",colnames(train_selec))]
+
+correlationMatrix.1 <- cor(cor_train.1[,1:37])
+
+# find attributes that that have more than 60% Correlation
+highlyCorrelated.1 <- findCorrelation(correlationMatrix.1, cutoff=0.6)
+
+colnames(train_selec[highlyCorrelated.1])
+
+#remove those attributes with more than 60% correlation
+train_selec <- remove_attribute(train_selec,colnames(train_selec[highlyCorrelated.1]))
+
+```
+
+#### Logistic Regression Model   
+```{r}
+# Logistic Regression
+library(caret)
+set.seed(1)
+model_lgr <- train(Chemistry ~ .,
+                   data = train_selec,
+                   method = "glm",
+                   preProcess = c("center","scale"), #Normalize
+                   trControl = trainControl(method = "cv" , number = 10)
+                   )
+```
+
+#### Confusion Matrix and accuracy for Logistic Regression   
+- Accuracy for Logistic Regression on Validation Set: 0.7117   
+```{r}
+confusionMatrix(predict(model_lgr,valid),as.factor(valid$Chemistry),positive = 'Good')
+```
+
+#### Decision Tree Model  
+```{r}
+#Decision Tree
+set.seed(1)
+model_dt <- train(Chemistry ~ ., 
+            data = train_selec,
+            method = "rpart",
+            tuneGrid = expand.grid(cp = c(0.60, 0.40, 0.10, 0.05, 0.01)),
+            parms = list(split = "gini"),
+            preProcess = c("center","scale"), #Normalize
+            trControl = trainControl(method = "cv", number = 10) # Add Cross-Validation, 10 folds
+            )
+```
+
+#### Confusion Matrix and Accuracy for Decision Tree  
+- Accuracy for Decision Tree on Validation Set: 0.7292   
+```{r}
+confusionMatrix(predict(model_dt,valid),as.factor(valid$Chemistry),positive = 'Good')
+```
+
+#### eXtreme Gradient Boosting Model  
+```{r}
+# XGBoost
+library(caret)
+library(xgboost)
+
+set.seed(1)
+model_xgb <- train(Chemistry ~ .,
+                   data = train_selec,
+                   method = "xgbTree",
+                   preProcess = c("center","scale"), #Normalize
+                   trControl = trainControl(method = "cv" , number = 10)
+                   )
+```
+
+#### Confusion Matrix and Accuracy for eXtreme Gradient Boosting  
+- Accuracy for eXtreme Gradient Boosting on Validation Set: 0.7618     
+```{r}
+confusionMatrix(predict(model_xgb,valid),as.factor(valid$Chemistry),positive = 'Good')
+
+```
+
+ 
+#### Random Forest Model  
+```{r} 
+# Random Forest
+library(caret)
+set.seed(1)
+model_rf <- train(Chemistry ~ .,
+                   data = train_selec,
+                   method = "rf",
+                   preProcess = c("center","scale"), #Normalize
+                   trControl = trainControl(method = "cv" , number = 10)
+                   )
+```
+
+#### Confusion Matrix and Accuracy for Random Forest(Best Model)  
+- Accuracy for Random Forest on Validation Set: 0.9942  
+```{r}
+confusionMatrix(predict(model_rf,valid),as.factor(valid$Chemistry),positive = 'Good')
+
+```
+
+# Task 2    
+**[Task 2]**: (30 marks) Create a text file with the predictions of your best model on the test dataset.    
+The file should contain "Pair.ID, Chemistry" as the first row, and "<number>, <predicted label>" on each subsequent row.    
+See example below (without the quotes):    
+
+"  
+Pair.ID, Chemistry   
+1, Good   
+2, Bad   
+3, Bad  
+4, Good    
+"   
+The example above shows that:     
+
+??? The file should not contain any quotes or double quotes.    
+??? The first row is used for the feature names: "Pair.ID, Chemistry" (without quotes) separated by comma.  
+??? Each row contains two values separated by a comma.   
+Marking will take into account two things:    
+
+??? Task 1: The quality of your approach to training, in particular to the avoidance of overfitting.   
+??? Task 2: The accuracy of your predictions on the test dataset.    
+
+
+#### Predict Test Dataset using Random Forest(Best Model)   
+```{r}
+test$Chemistry <- predict(model_rf,test)
+```
+
+#### Write to PA4.txt file  
+```{r}
+#Get Pair.ID from Test
+Pair.ID <- test$Pair.ID
+#Get Chemistry from Test
+Chemistry <- test$Chemistry
+#Store Pair.ID and Chemistry in new dataframe to export as Txt File
+test_results <- cbind.data.frame(Pair.ID,Chemistry)
+
+#Write to Txt file
+write.table(test_results, file = "PA4.txt", append = FALSE, quote = FALSE, sep = ", ",
+            eol = "\n", na = "NA", dec = ".", row.names = FALSE,
+            col.names = TRUE, qmethod = c("escape", "double"),
+            fileEncoding = "")
+```
